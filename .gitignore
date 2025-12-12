@@ -30,6 +30,11 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+.bmad/
+.claude/
+.cursor/
+bmad-custom-modules-src/
+bmad-custom-src/
 
 # Misc
 *.pem
