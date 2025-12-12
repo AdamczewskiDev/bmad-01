@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThanOrEqual, Between } from 'typeorm';
 import { Transaction, Wallet } from '../entities';
 
 @Injectable()
@@ -18,39 +18,57 @@ export class ReportsService {
     startDate?: Date,
     endDate?: Date,
   ) {
-    const where: any = {
-      userId,
-      type: 'EXPENSE',
-    };
-    if (walletId) where.walletId = walletId;
-    if (startDate || endDate) {
-      where.bookedAt = {};
-      if (startDate) where.bookedAt = MoreThanOrEqual(startDate);
-      if (endDate) where.bookedAt = { ...where.bookedAt, ...LessThanOrEqual(endDate) };
+    const queryBuilder = this.transactionRepository
+      .createQueryBuilder('transaction')
+      .where('transaction.userId = :userId', { userId })
+      .andWhere('transaction.type = :type', { type: 'EXPENSE' });
+
+    if (walletId) {
+      queryBuilder.andWhere('transaction.walletId = :walletId', { walletId });
     }
 
-    const transactions = await this.transactionRepository.find({
-      where,
-      select: ['bookedAt', 'amountBase'],
-      order: { bookedAt: 'ASC' },
-    });
+    if (startDate && endDate) {
+      queryBuilder.andWhere('transaction.bookedAt BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      });
+    } else if (startDate) {
+      queryBuilder.andWhere('transaction.bookedAt >= :startDate', { startDate });
+    } else if (endDate) {
+      queryBuilder.andWhere('transaction.bookedAt <= :endDate', { endDate });
+    }
+
+    const transactions = await queryBuilder
+      .select(['transaction.bookedAt', 'transaction.amountBase'])
+      .orderBy('transaction.bookedAt', 'ASC')
+      .getMany();
 
     return transactions;
   }
 
   async getCategoryBreakdown(userId: string, walletId?: string, startDate?: Date, endDate?: Date) {
-    const where: any = { userId };
-    if (walletId) where.walletId = walletId;
-    if (startDate || endDate) {
-      where.bookedAt = {};
-      if (startDate) where.bookedAt = MoreThanOrEqual(startDate);
-      if (endDate) where.bookedAt = { ...where.bookedAt, ...LessThanOrEqual(endDate) };
+    const queryBuilder = this.transactionRepository
+      .createQueryBuilder('transaction')
+      .leftJoinAndSelect('transaction.category', 'category')
+      .where('transaction.userId = :userId', { userId })
+      .andWhere('transaction.type = :type', { type: 'EXPENSE' });
+
+    if (walletId) {
+      queryBuilder.andWhere('transaction.walletId = :walletId', { walletId });
     }
 
-    const transactions = await this.transactionRepository.find({
-      where,
-      relations: ['category'],
-    });
+    if (startDate && endDate) {
+      queryBuilder.andWhere('transaction.bookedAt BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      });
+    } else if (startDate) {
+      queryBuilder.andWhere('transaction.bookedAt >= :startDate', { startDate });
+    } else if (endDate) {
+      queryBuilder.andWhere('transaction.bookedAt <= :endDate', { endDate });
+    }
+
+    const transactions = await queryBuilder.getMany();
 
     const breakdown = transactions.reduce((acc, tx) => {
       const catName = tx.category?.name || 'Brak kategorii';
@@ -68,9 +86,13 @@ export class ReportsService {
   async getGoalProgress(userId: string, walletId?: string) {
     const query = this.walletRepository
       .createQueryBuilder('wallet')
-      .leftJoinAndSelect('wallet.transactions', 'transaction')
-      .where('wallet.ownerId = :userId', { userId })
-      .orWhere('EXISTS (SELECT 1 FROM wallet_memberships wm WHERE wm.walletId = wallet.id AND wm.userId = :userId)', { userId });
+      .leftJoinAndSelect('wallet.transactions', 'transaction', 'transaction.type = :incomeType', {
+        incomeType: 'INCOME',
+      })
+      .where(
+        '(wallet.ownerId = :userId OR EXISTS (SELECT 1 FROM wallet_memberships wm WHERE wm.walletId = wallet.id AND wm.userId = :userId))',
+        { userId },
+      );
 
     if (walletId) {
       query.andWhere('wallet.id = :walletId', { walletId });
@@ -91,7 +113,7 @@ export class ReportsService {
         walletName: wallet.name,
         goalAmount: wallet.goalAmount ? Number(wallet.goalAmount) : null,
         currentAmount: totalIncome,
-        progress: progress ? Math.min(100, progress) : null,
+        progress: progress ? Math.min(100, Math.max(0, progress)) : null,
       };
     });
   }

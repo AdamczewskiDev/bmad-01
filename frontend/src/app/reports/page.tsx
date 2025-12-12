@@ -26,7 +26,7 @@ export default function ReportsPage() {
     if (wallets.length > 0) {
       loadReports();
     }
-  }, [selectedWallet, startDate, endDate]);
+  }, [selectedWallet, startDate, endDate, wallets.length]);
 
   const loadWallets = async () => {
     try {
@@ -41,18 +41,22 @@ export default function ReportsPage() {
     try {
       setIsLoading(true);
       setError('');
+      const walletId = selectedWallet && selectedWallet !== '' ? selectedWallet : undefined;
       const [breakdownData, progressData] = await Promise.all([
         reportsApi.getCategoryBreakdown(
-          selectedWallet || undefined,
+          walletId,
           startDate || undefined,
           endDate || undefined
         ),
-        reportsApi.getGoalProgress(selectedWallet || undefined),
+        reportsApi.getGoalProgress(walletId),
       ]);
-      setCategoryBreakdown(breakdownData);
-      setGoalProgress(progressData);
+      setCategoryBreakdown(breakdownData || []);
+      setGoalProgress(progressData || []);
     } catch (err: any) {
+      console.error('Error loading reports:', err);
       setError('Błąd ładowania raportów: ' + (err.response?.data?.message || err.message));
+      setCategoryBreakdown([]);
+      setGoalProgress([]);
     } finally {
       setIsLoading(false);
     }
