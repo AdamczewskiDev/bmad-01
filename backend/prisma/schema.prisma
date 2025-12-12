@@ -1,0 +1,184 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum Currency {
+  PLN
+  EUR
+  USD
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum MembershipRole {
+  OWNER
+  MEMBER
+}
+
+enum TransactionSource {
+  MANUAL
+  BANK
+}
+
+// Models
+model User {
+  id         String             @id @default(uuid())
+  email      String             @unique
+  password   String
+  status     String             @default("active")
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  wallets        Wallet[]       @relation("WalletOwner")
+  memberships    WalletMembership[]
+  categories     Category[]
+  transactions   Transaction[]
+  bankConnections BankConnection[]
+  auditLogs      AuditLog[]     @relation("AuditActor")
+}
+
+model Wallet {
+  id            String             @id @default(uuid())
+  name          String
+  baseCurrency  Currency
+  goalAmount    Decimal?           @db.Decimal(18, 2)
+  limitAmount   Decimal?           @db.Decimal(18, 2)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  ownerId       String
+  owner         User               @relation("WalletOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  memberships   WalletMembership[]
+  transactions  Transaction[]
+}
+
+model WalletMembership {
+  id              String           @id @default(uuid())
+  role            MembershipRole   @default(MEMBER)
+  canEditAll      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+
+  walletId        String
+  userId          String
+  wallet          Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, userId])
+}
+
+model Category {
+  id         String             @id @default(uuid())
+  name       String
+  type       TransactionType
+  isDefault  Boolean            @default(false)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  userId     String?
+  user       User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  transactions Transaction[]
+  mappedBankTransactions BankTransaction[] @relation("CategoryBankMapping")
+}
+
+model Transaction {
+  id              String             @id @default(uuid())
+  type            TransactionType
+  amount          Decimal            @db.Decimal(18, 2)
+  currency        Currency
+  amountBase      Decimal            @db.Decimal(18, 2)
+  note            String?
+  source          TransactionSource  @default(MANUAL)
+  bookedAt        DateTime
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  walletId        String
+  userId          String
+  categoryId      String?
+  bankTransactionId String? @unique
+
+  wallet          Wallet             @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bankTransaction BankTransaction?   @relation(fields: [bankTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([walletId, bookedAt])
+}
+
+model FXRate {
+  id          String    @id @default(uuid())
+  asOfDate    DateTime
+  currency    Currency
+  rate        Decimal   @db.Decimal(18, 6)
+  source      String    @default("NBP")
+  createdAt   DateTime  @default(now())
+
+  @@unique([asOfDate, currency])
+}
+
+model BankConnection {
+  id                String    @id @default(uuid())
+  bank              String
+  status            String    @default("active")
+  consentValidUntil DateTime?
+  refreshTokenEnc   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankTransactions  BankTransaction[]
+}
+
+model BankTransaction {
+  id               String             @id @default(uuid())
+  externalId       String
+  amount           Decimal            @db.Decimal(18, 2)
+  currency         Currency
+  bookedAt         DateTime
+  status           String             @default("pending")
+  mapped           Boolean            @default(false)
+  rawPayload       Json?
+  mappedCategoryId String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  bankConnectionId String
+  bankConnection   BankConnection     @relation(fields: [bankConnectionId], references: [id], onDelete: Cascade)
+  mappedCategory   Category?          @relation("CategoryBankMapping", fields: [mappedCategoryId], references: [id], onDelete: SetNull)
+  transaction      Transaction?
+
+  @@index([bankConnectionId, bookedAt])
+  @@unique([bankConnectionId, externalId])
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String
+  context     Json?
+  createdAt   DateTime  @default(now())
+
+  actor       User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+}
