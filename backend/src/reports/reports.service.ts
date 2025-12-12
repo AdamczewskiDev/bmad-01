@@ -84,37 +84,47 @@ export class ReportsService {
   }
 
   async getGoalProgress(userId: string, walletId?: string) {
-    const query = this.walletRepository
-      .createQueryBuilder('wallet')
-      .leftJoinAndSelect('wallet.transactions', 'transaction', 'transaction.type = :incomeType', {
-        incomeType: 'INCOME',
-      })
-      .where(
-        '(wallet.ownerId = :userId OR EXISTS (SELECT 1 FROM wallet_memberships wm WHERE wm.walletId = wallet.id AND wm.userId = :userId))',
-        { userId },
-      );
+    try {
+      const query = this.walletRepository
+        .createQueryBuilder('wallet')
+        .leftJoinAndSelect('wallet.transactions', 'transaction')
+        .where(
+          '(wallet.ownerId = :userId OR EXISTS (SELECT 1 FROM wallet_memberships wm WHERE wm.walletId = wallet.id AND wm.userId = :userId))',
+          { userId },
+        );
 
-    if (walletId) {
-      query.andWhere('wallet.id = :walletId', { walletId });
+      if (walletId) {
+        query.andWhere('wallet.id = :walletId', { walletId });
+      }
+
+      const wallets = await query.getMany();
+
+      return wallets.map((wallet) => {
+        // Filtruj tylko transakcje typu INCOME
+        const incomeTransactions = (wallet.transactions || []).filter(
+          (tx) => tx.type === 'INCOME',
+        );
+        const totalIncome = incomeTransactions.reduce(
+          (sum, tx) => sum + Number(tx.amountBase || 0),
+          0,
+        );
+        
+        const goalAmountNum = wallet.goalAmount ? Number(wallet.goalAmount) : null;
+        const progress = goalAmountNum && goalAmountNum > 0
+          ? (totalIncome / goalAmountNum) * 100
+          : null;
+
+        return {
+          walletId: wallet.id,
+          walletName: wallet.name,
+          goalAmount: goalAmountNum,
+          currentAmount: totalIncome,
+          progress: progress !== null ? Math.min(100, Math.max(0, progress)) : null,
+        };
+      });
+    } catch (error) {
+      console.error('Error in getGoalProgress:', error);
+      throw error;
     }
-
-    const wallets = await query.getMany();
-
-    return wallets.map((wallet) => {
-      const totalIncome = wallet.transactions
-        .filter((tx) => tx.type === 'INCOME')
-        .reduce((sum, tx) => sum + Number(tx.amountBase), 0);
-      const progress = wallet.goalAmount
-        ? (totalIncome / Number(wallet.goalAmount)) * 100
-        : null;
-
-      return {
-        walletId: wallet.id,
-        walletName: wallet.name,
-        goalAmount: wallet.goalAmount ? Number(wallet.goalAmount) : null,
-        currentAmount: totalIncome,
-        progress: progress ? Math.min(100, Math.max(0, progress)) : null,
-      };
-    });
   }
 }
